@@ -1,7 +1,12 @@
 Remote Access VPN Implementation in Cisco Packet Tracer
+
+
 Introduction
+
 This project demonstrates how a remote employee can securely access an organization's internal network using a VPN.
-The project is implemented in Cisco Packet Tracer using Cisco Easy VPN with IPsec and Xauth. The Remote Employee PC connects through an untrusted WAN network to the VPN Gateway. After successful authentication, the user can access the internal network securely.
+
+The project is implemented in Cisco Packet Tracer using Cisco Easy VPN with IPsec and Xauth. The Remote Employee PC connects through an untrusted WAN network to the VPN Gateway. 
+After successful authentication, the user can access the internal network securely.
 The basic communication flow is:
 Remote Employee PC → ISP/WAN → VPN Gateway → Internal LAN → Internal Resources
 Network Topology
