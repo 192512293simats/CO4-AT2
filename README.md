@@ -1,274 +1,99 @@
-# Remote-Access VPN Implementation in Cisco Packet Tracer
-### Portfolio: Secure Remote Communication via Cisco Easy VPN (IPsec + Xauth)
-
----
-
-## 0. VPN Mechanism Used — and Why It's the Correct Choice
-
-Packet Tracer does **not** support full Cisco AnyConnect SSL VPN. The only remote-access VPN mechanism it actually supports is:
-
-> **Cisco Easy VPN** — an IPsec-based remote-access VPN where the router acts as an **Easy VPN Server**, and the remote PC's built-in **VPN Client application** (Desktop → VPN Configuration) acts as the **Easy VPN Remote/software client**.
-
-This is real, documented, working functionality in Packet Tracer (used in Cisco's own CCNA Security course labs). It supports:
-- IKE Phase 1 (ISAKMP) with pre-shared key group authentication
-- IPsec Phase 2 (transform sets, dynamic crypto maps)
-- **Xauth** (extended authentication) — username/password check per remote user
-- Mode-config — dynamic IP assignment to the remote client from an internal pool
-- Reverse-route injection
-
-This matches your required flow exactly:
-
-```
-REMOTE USER → INTERNET/WAN → VPN GATEWAY → INTERNAL LAN → INTERNAL RESOURCES
-```
-
-No branch routers, no Tunnel1/Tunnel2, no site-to-site crypto maps between two LANs.
-
----
-
-## 1. Topology Diagram (build this exactly)
-
-```
-[Remote Employee PC]
-   192.168.100.10/24
-         |
-         | (Untrusted Remote Network)
-         |
-   [ISP / WAN Router]  <-- simulates the public Internet
-   Fa0/0: 192.168.100.1/24 (faces remote user)
-   Fa0/1: 203.0.113.1/30   (public WAN link)
-         |
-         | (WAN / "Internet" link — untrusted)
-         |
-   [Remote Access VPN Gateway]  <-- controlled entry point
-   Fa0/0: 203.0.113.2/30   (public/WAN side)
-   Fa0/1: 192.168.10.1/24  (trusted LAN side)
-         |
-         |
-   [Internal LAN Switch]
-         |
-   -------------------------------
-   |            |                |
-[Internal PC] [File/Web Server] [Database Server]
-192.168.10.10  192.168.10.20    192.168.10.30
-```
-
-**Visual zoning (use Packet Tracer's colored background/box shapes or notes to mark this clearly):**
-- 🔴 **Untrusted zone** — Remote Employee PC + ISP Router + WAN link (203.0.113.0/30)
-- 🟡 **Security boundary** — Remote Access VPN Gateway (this is the only device with one leg in untrusted space and one leg in trusted space)
-- 🟢 **Trusted zone** — Internal LAN Switch + Internal PC + File/Web Server + Database Server
-
----
-
-## 2. Device List
-
-| # | Device | Packet Tracer Model | Label |
-|---|--------|---------------------|-------|
-| 1 | Remote Employee PC | PC-PT | **Remote Employee** |
-| 2 | WAN simulation router | Router (e.g. 1941) | **ISP / Internet Router** |
-| 3 | VPN gateway router | Router (e.g. 1941, needs `securityk9` license for crypto) | **Remote Access VPN Gateway** |
-| 4 | Internal switch | Switch (2960) | **Internal LAN Switch** |
-| 5 | Internal PC | PC-PT | **Internal Employee PC** |
-| 6 | File/Web server | Server-PT | **File/Web Server** |
-| 7 | Database server | Server-PT | **Database Server** |
-
-> ⚠️ Important PT-specific note: on the **VPN Gateway router**, run `show version` — if crypto commands are rejected, go to the router's Physical tab → power off → drag in the **security technology package (securityk9)** license module (or choose a router model in PT that ships with crypto support, e.g. 1941 or 2911). This is required for `crypto` commands to appear at all.
-
----
-
-## 3. Cable Connections
-
-| From | Port | To | Port | Cable Type |
-|------|------|----|------|-----------|
-| Remote Employee PC | FastEthernet0 | ISP Router | Fa0/0 | Copper Straight-Through |
-| ISP Router | Fa0/1 | VPN Gateway | Fa0/0 | Copper Straight-Through (or Serial if you prefer a WAN-style link) |
-| VPN Gateway | Fa0/1 | Internal LAN Switch | Fa0/1 | Copper Straight-Through |
-| Internal LAN Switch | Fa0/2 | Internal Employee PC | FastEthernet0 | Copper Straight-Through |
-| Internal LAN Switch | Fa0/3 | File/Web Server | FastEthernet0 | Copper Straight-Through |
-| Internal LAN Switch | Fa0/4 | Database Server | FastEthernet0 | Copper Straight-Through |
-
----
-
-## 4. IP Addressing Table
-
-| Device | Interface | IP Address | Subnet Mask | Default Gateway |
-|--------|-----------|------------|--------------|------------------|
-| Remote Employee PC | FastEthernet0 | 192.168.100.10 | 255.255.255.0 | 192.168.100.1 |
-| ISP Router | Fa0/0 | 192.168.100.1 | 255.255.255.0 | — |
-| ISP Router | Fa0/1 | 203.0.113.1 | 255.255.255.252 | — |
-| VPN Gateway | Fa0/0 (WAN) | 203.0.113.2 | 255.255.255.252 | — |
-| VPN Gateway | Fa0/1 (LAN) | 192.168.10.1 | 255.255.255.0 | — |
-| Internal Employee PC | FastEthernet0 | 192.168.10.10 | 255.255.255.0 | 192.168.10.1 |
-| File/Web Server | FastEthernet0 | 192.168.10.20 | 255.255.255.0 | 192.168.10.1 |
-| Database Server | FastEthernet0 | 192.168.10.30 | 255.255.255.0 | 192.168.10.1 |
-| **VPN Pool (assigned dynamically to remote client's tunnel)** | — | 192.168.50.10–192.168.50.100 | 255.255.255.0 | (assigned via mode-config) |
-
-Note the remote PC keeps its **physical** address (192.168.100.10) on its real NIC. When the VPN connects, Packet Tracer's VPN client establishes a logical tunnel and the client is also reachable via a **virtual pool address** (192.168.50.x) inside the tunnel — this virtual address is what the internal LAN actually "sees" as the source of tunneled traffic.
-
----
-
-## 5. Base Router Configuration (do this first, before crypto)
-
-### 5.1 ISP / Internet Router
-```
-enable
-configure terminal
-hostname ISP-Router
-
-interface FastEthernet0/0
- ip address 192.168.100.1 255.255.255.0
- no shutdown
-exit
-
-interface FastEthernet0/1
- ip address 203.0.113.1 255.255.255.252
- no shutdown
-exit
-
-end
-write memory
-```
-This router simulates the Internet — it does **not** get a route to the internal LAN (192.168.10.0/24). It only ever sees encrypted IPsec/ISAKMP traffic destined to 203.0.113.2. This is intentional and proves the LAN is unreachable except through the tunnel.
-
-### 5.2 Remote Access VPN Gateway — interfaces
-```
-enable
-configure terminal
-hostname VPN-Gateway
-
-interface FastEthernet0/0
- ip address 203.0.113.2 255.255.255.252
- no shutdown
-exit
-
-interface FastEthernet0/1
- ip address 192.168.10.1 255.255.255.0
- no shutdown
-exit
-
-end
-```
-
----
-
-## 6. Routing Configuration
-
-```
-! On the VPN Gateway: route to reach the remote network's real subnet
-! (needed so ISAKMP/IPsec packets can find their way back to the remote PC)
-ip route 192.168.100.0 255.255.255.0 203.0.113.1
-
-! On the ISP Router: nothing extra needed — it is directly connected
-! to both 192.168.100.0/24 and 203.0.113.0/30. It has NO route to
-! 192.168.10.0/24 — this is deliberate. That subnet must only be
-! reachable through the encrypted tunnel, never in the clear.
-```
-
-The internal PCs/servers don't need extra routes either — their default gateway is the VPN Gateway itself, and the VPN Gateway owns the pool addresses (192.168.50.0/24) via **reverse-route injection**, configured below.
-
----
-
-## 7. VPN (Easy VPN Server) Configuration — on the VPN Gateway
-
-### 7.1 Enable AAA (required for Xauth user authentication)
-```
-configure terminal
-aaa new-model
-aaa authentication login VPN-AUTHEN local
-aaa authorization network VPN-AUTHOR local
-```
-
-### 7.2 Create local users (these are the remote employees who may connect)
-```
-username remoteuser1 password 0 CiscoVPN123
-username remoteuser2 password 0 CiscoVPN456
-```
-
-### 7.3 ISAKMP (IKE Phase 1) policy
-```
-crypto isakmp policy 10
- encryption aes 256
- hash sha
- authentication pre-share
- group 2
- lifetime 3600
-exit
-```
-
-### 7.4 ISAKMP client configuration group (this is what the remote PC's "Group Name" / "Group Key" fields must match)
-```
-ip local pool VPN-POOL 192.168.50.10 192.168.50.100
-
-crypto isakmp client configuration group VPN-REMOTE-GROUP
- key CorpGroupKey2024
- pool VPN-POOL
- acl 101
-exit
-```
-
-### 7.5 Split-tunnel ACL (only traffic to the internal LAN goes through the tunnel; defines what the ACL 101 above protects)
-```
-access-list 101 permit ip 192.168.10.0 0.0.0.255 192.168.50.0 0.0.0.255
-```
-
-### 7.6 IPsec transform set (Phase 2 encryption/integrity)
-```
-crypto ipsec transform-set VPN-SET esp-aes esp-sha-hmac
-exit
-```
-
-### 7.7 Dynamic crypto map + reverse-route
-```
-crypto dynamic-map VPN-DYNMAP 10
- set transform-set VPN-SET
- reverse-route
-exit
-```
-
-### 7.8 Crypto map tying it all together (Xauth + mode-config + dynamic map)
-```
-crypto map VPN-CMAP client authentication list VPN-AUTHEN
-crypto map VPN-CMAP isakmp authorization list VPN-AUTHOR
-crypto map VPN-CMAP client configuration address respond
-crypto map VPN-CMAP 10 ipsec-isakmp dynamic VPN-DYNMAP
-```
-
-### 7.9 Apply the crypto map to the WAN (public) interface
-```
-interface FastEthernet0/0
- crypto map VPN-CMAP
-exit
-
-end
-write memory
-```
-
----
-
-## 8. Authentication Configuration — Summary
-
-There are **two layers** of authentication happening, which you should explicitly call out in your portfolio:
-
-1. **Group authentication (IKE Phase 1)** — the remote PC's VPN client must supply the correct **Group Name** (`VPN-REMOTE-GROUP`) and **Group (pre-shared) Key** (`CorpGroupKey2024`) before ISAKMP will even negotiate. This proves the device "belongs" to your organization's VPN policy.
-2. **User authentication (Xauth)** — after Phase 1 succeeds, the router prompts for a **username/password** (checked against the local AAA database — `remoteuser1` / `CiscoVPN123`). This proves *who* the specific person is, not just that they have the group key.
-
-This two-factor structure (something the org issued + something the individual knows) is standard Easy VPN behavior and is exactly what Packet Tracer will actually enforce.
-
----
-
-## 9. Internal Server Configuration
-
-### File/Web Server (Server-PT)
-- Desktop → IP Configuration:
-  - IP: `192.168.10.20`
-  - Subnet: `255.255.255.0`
-  - Gateway: `192.168.10.1`
-- Services tab → **HTTP**: turn ON (leave default page, or edit `index.html` to say "Internal File/Web Server — Access Confirmed")
-
-### Database Server (Server-PT)
-- Desktop → IP Configuration:
-  - IP: `192.168.10.30`
-  - Subnet: `255.255.255.0`
+Remote Access VPN Implementation in Cisco Packet Tracer
+Introduction
+This project demonstrates how a remote employee can securely access an organization's internal network using a VPN.
+The project is implemented in Cisco Packet Tracer using Cisco Easy VPN with IPsec and Xauth. The Remote Employee PC connects through an untrusted WAN network to the VPN Gateway. After successful authentication, the user can access the internal network securely.
+The basic communication flow is:
+Remote Employee PC → ISP/WAN → VPN Gateway → Internal LAN → Internal Resources
+Network Topology
+The network contains a Remote Employee PC, an ISP Router, a VPN Gateway, an Internal Switch, an Internal PC, a File/Web Server and a Database Server.
+The Remote Employee PC uses the address 192.168.100.10.
+The ISP Router connects the remote network to the WAN using 203.0.113.1.
+The VPN Gateway uses 203.0.113.2 on the WAN side and 192.168.10.1 on the internal LAN side.
+The internal network contains:
+Internal PC – 192.168.10.10
+File/Web Server – 192.168.10.20
+Database Server – 192.168.10.30
+The VPN clients receive an address from the VPN pool 192.168.50.10 to 192.168.50.100. �
+Remote_Access_VPN_Packet_Tracer_Portfolio.md
+VPN Technology Used
+Cisco Easy VPN is used because it provides remote-access VPN functionality in Cisco Packet Tracer.
+The VPN uses IPsec to protect the communication and Xauth to authenticate individual users.
+The main security mechanisms used are:
+IKE Phase 1 for VPN negotiation
+Pre-shared key authentication
+Xauth username and password authentication
+IPsec encryption
+Dynamic crypto maps
+VPN address pool
+Reverse-route injection
+IP Configuration
+The Remote Employee PC is configured with:
+IP Address: 192.168.100.10
+Subnet Mask: 255.255.255.0
+Default Gateway: 192.168.100.1
+The ISP Router uses:
+Fa0/0: 192.168.100.1
+Fa0/1: 203.0.113.1
+The VPN Gateway uses:
+Fa0/0: 203.0.113.2
+Fa0/1: 192.168.10.1
+The internal devices use the VPN Gateway address 192.168.10.1 as their default gateway.
+VPN Gateway Configuration
+AAA is enabled on the VPN Gateway for user authentication.
+Two VPN users are created:
+remoteuser1 with password CiscoVPN123
+remoteuser2 with password CiscoVPN456
+The IKE policy uses AES-256 encryption, SHA hashing, pre-shared authentication and Diffie-Hellman group 2.
+The VPN address pool is configured from 192.168.50.10 to 192.168.50.100.
+The VPN group name is VPN-REMOTE-GROUP and the group key is CorpGroupKey2024.
+IPsec uses AES encryption with SHA-HMAC for integrity.
+The dynamic crypto map is also configured with reverse-route injection so that the VPN Gateway can reach the dynamically assigned VPN client addresses. �
+Remote_Access_VPN_Packet_Tracer_Portfolio.md
+Authentication
+There are two stages of authentication in this VPN.
+First, the remote client provides the VPN Group Name and Group Key. This allows the IKE negotiation to begin.
+Second, Xauth asks for the individual user's username and password. These credentials are checked against the local AAA database on the VPN Gateway.
+This provides an additional layer of security because the user needs both the VPN group credentials and valid individual login credentials. �
+Remote_Access_VPN_Packet_Tracer_Portfolio.md
+Remote VPN Connection
+On the Remote Employee PC, the VPN configuration is entered using the VPN application.
+The following details are used:
+Host IP: 203.0.113.2
+Group Name: VPN-REMOTE-GROUP
+Group Key: CorpGroupKey2024
+Username: remoteuser1
+Password: CiscoVPN123
+After entering the correct details, the user connects to the VPN.
+Once the connection is successful, the VPN client receives an IP address from the VPN pool.
+VPN Verification
+The VPN Gateway can be checked using the following commands:
+show crypto isakmp sa
+show crypto ipsec sa
+show crypto session
+show crypto map
+show ip route
+The ISAKMP security association should show the VPN session in the appropriate established state.
+The IPsec security association should show packet counters increasing when traffic is sent through the VPN.
+This confirms that encrypted traffic is actually passing through the VPN tunnel. �
+Remote_Access_VPN_Packet_Tracer_Portfolio.md
+Testing
+The VPN is tested before and after establishing the connection.
+Before connecting the VPN, the Remote Employee PC should not be able to directly access the internal network.
+After connecting the VPN, the Remote Employee PC should be able to ping the internal devices.
+The following addresses can be tested:
+192.168.10.10
+192.168.10.20
+192.168.10.30
+The internal web server can also be accessed using 192.168.10.20.
+If the ping succeeds and the internal web page loads, it confirms that the VPN connection is working correctly.
+Result
+The project successfully demonstrates secure remote access using Cisco Easy VPN.
+Before the VPN connection, the remote user cannot directly access the internal network. After authentication and establishment of the IPsec tunnel, the remote user can securely communicate with the internal network.
+The project demonstrates authentication, encryption, secure tunneling and controlled access to internal resources.
+Conclusion
+This project shows how a remote employee can securely connect to an organization's internal network through an untrusted WAN.
+Cisco Easy VPN provides the remote-access connection, IPsec protects the communication, and Xauth provides user authentication.
+The successful ping and internal web server access after VPN connection confirm that the secure remote-access VPN is working as intended.  - Subnet: `255.255.255.0`
   - Gateway: `192.168.10.1`
 - Services tab → you can simply leave this reachable via ping/Telnet for testing (PT doesn't simulate real SQL); optionally enable the **Telnet/SSH** or **HTTP** service on it just so you can demonstrate an authenticated internal connection over the tunnel.
 
